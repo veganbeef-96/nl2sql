@@ -3,8 +3,10 @@ from __future__ import annotations
 import random
 import sys
 
+from collections.abc import Collection
+
 from . import console
-from .config import Config, load_config
+from .config import SENSITIVE_COLUMNS, Config, load_config
 from .database import Database, DatabaseError
 from .guardrail import GuardrailError
 from .guardrail import enforce as enforce_department
@@ -20,6 +22,13 @@ MAX_ATTEMPTS = 2
 def run(config: Config, provider: Provider, database: Database) -> None:
     department = random.choice(_DEPARTMENTS)
     console.log_info(f"Department selected: {department}")
+
+    masked_columns = SENSITIVE_COLUMNS if config.mask_sensitive else frozenset()
+    if masked_columns:
+        console.log_info(
+            "Sensitive column masking: ON (salary / bonus / balance redacted)."
+        )
+
     console.print_banner(department)
 
     while True:
@@ -35,11 +44,15 @@ def run(config: Config, provider: Provider, database: Database) -> None:
             console.log_info("Goodbye.")
             return
 
-        _handle_question(question, department, provider, database)
+        _handle_question(question, department, provider, database, masked_columns)
 
 
 def _handle_question(
-    question: str, department: str, provider: Provider, database: Database
+    question: str,
+    department: str,
+    provider: Provider,
+    database: Database,
+    masked_columns: Collection[str] = frozenset(),
 ) -> None:
     feedback: str | None = None
 
@@ -68,7 +81,7 @@ def _handle_question(
             except DatabaseError as e:
                 feedback = f"SQL: {sql}\nSQLite error: {e}"
             else:
-                console.render_results(result)
+                console.render_results(result, masked_columns)
                 return
 
         if attempt < MAX_ATTEMPTS:

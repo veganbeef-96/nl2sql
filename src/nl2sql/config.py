@@ -27,6 +27,10 @@ _DEFAULT_MODEL = {
 
 _DEFAULT_DB_PATH = "employees.db"
 
+SENSITIVE_COLUMNS = frozenset({"SalaryAmount", "YearlyBonusAmount", "RemainingBalance"})
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+
 
 @dataclass(frozen=True)
 class Config:
@@ -35,6 +39,7 @@ class Config:
     model: str
     db_path: str
     base_url: str | None
+    mask_sensitive: bool
 
 
 def load_config() -> Config:
@@ -56,6 +61,7 @@ def load_config() -> Config:
     model = os.getenv("NL2SQL_MODEL") or _DEFAULT_MODEL[provider]
     db_path = os.getenv("NL2SQL_DB_PATH") or _DEFAULT_DB_PATH
     base_url = os.getenv(_BASE_URL_VAR[provider]) or None
+    mask_sensitive = os.getenv("NL2SQL_MASK_SENSITIVE", "").strip().lower() in _TRUE_VALUES
 
     return Config(
         provider=provider,
@@ -63,4 +69,5 @@ def load_config() -> Config:
         model=model,
         db_path=db_path,
         base_url=base_url,
+        mask_sensitive=mask_sensitive,
     )
