@@ -14,6 +14,8 @@ _DEPARTMENTS = ("Sales", "Marketing", "Engineering")
 _NO_QUERY = "NO_QUERY"
 _EXIT_COMMANDS = {"exit", "quit"}
 
+MAX_ATTEMPTS = 2
+
 
 def run(config: Config, provider: Provider, database: Database) -> None:
     department = random.choice(_DEPARTMENTS)
@@ -39,33 +41,42 @@ def run(config: Config, provider: Provider, database: Database) -> None:
 def _handle_question(
     question: str, department: str, provider: Provider, database: Database
 ) -> None:
-    try:
-        sql = provider.generate_sql(question, department)
-    except LLMError as e:
-        console.log_error(f"Could not generate SQL: {e}")
-        return
+    feedback: str | None = None
 
-    if sql.strip() == _NO_QUERY:
-        console.log_info(
-            "I can't answer that from this data. Try rephrasing your question."
-        )
-        return
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            sql = provider.generate_sql(question, department, feedback)
+        except LLMError as e:
+            console.log_error(f"Could not generate SQL: {e}")
+            return
 
-    try:
-        guarded = enforce_department(sql, department)
-    except GuardrailError as e:
-        console.log_error(f"Blocked by the department guardrail: {e}")
-        return
 
-    console.print_generated_sql(guarded.sql)
+        if sql.strip() == _NO_QUERY:
+            console.log_info(
+                "I can't answer that from this data. Try rephrasing your question."
+            )
+            return
 
-    try:
-        result = database.execute(guarded.sql, guarded.params)
-    except DatabaseError as e:
-        console.log_error(f"Query failed: {e}")
-        return
+        try:
+            guarded = enforce_department(sql, department)
+        except GuardrailError as e:
+            feedback = f"SQL: {sql}\nThe guardrail rejected it: {e}"
+        else:
+            console.print_generated_sql(guarded.sql)
+            try:
+                result = database.execute(guarded.sql, guarded.params)
+            except DatabaseError as e:
+                feedback = f"SQL: {sql}\nSQLite error: {e}"
+            else:
+                console.render_results(result)
+                return
 
-    console.render_results(result)
+        if attempt < MAX_ATTEMPTS:
+            console.log_info("Query failed; asking the model to correct it…")
+
+    console.log_error(
+        f"Couldn't produce a valid query for that after {MAX_ATTEMPTS} attempts."
+    )
 
 
 def main() -> None:

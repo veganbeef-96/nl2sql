@@ -11,8 +11,14 @@ class LLMError(Exception):
     """Raised when SQL generation fails (empty response, provider error, etc.)."""
 
 class Provider(Protocol):
-    def generate_sql(self, question: str, department: str) -> str:
-        """Return raw SQL (fences stripped) for `question`, scoped to `department`."""
+    def generate_sql(
+        self, question: str, department: str, feedback: str | None = None
+    ) -> str:
+        """Return raw SQL (fences stripped) for `question`, scoped to `department`.
+
+        `feedback` carries the error from a previous failed attempt so the model
+        can self-correct on a retry.
+        """
         ...
 
 class OpenAIProvider:
@@ -21,7 +27,9 @@ class OpenAIProvider:
         self._model = model
         self._base_url = base_url
 
-    def generate_sql(self, question: str, department: str) -> str:
+    def generate_sql(
+        self, question: str, department: str, feedback: str | None = None
+    ) -> str:
         from openai import OpenAI  # only needed for this provider
 
         client = OpenAI(api_key=self._api_key, base_url=self._base_url)
@@ -30,7 +38,7 @@ class OpenAIProvider:
                 model=self._model,
                 messages=[
                     {"role": "system", "content": build_system_prompt(department)},
-                    {"role": "user", "content": question},
+                    {"role": "user", "content": _user_content(question, feedback)},
                 ],
             )
         except Exception as e:
@@ -46,7 +54,9 @@ class AnthropicProvider:
         self._model = model
         self._base_url = base_url
 
-    def generate_sql(self, question: str, department: str) -> str:
+    def generate_sql(
+        self, question: str, department: str, feedback: str | None = None
+    ) -> str:
         import anthropic  # only needed for this provider
 
         client = anthropic.Anthropic(api_key=self._api_key, base_url=self._base_url)
@@ -56,7 +66,7 @@ class AnthropicProvider:
                 max_tokens=_MAX_OUTPUT_TOKENS,
                 thinking={"type": "disabled"},
                 system=build_system_prompt(department),
-                messages=[{"role": "user", "content": question}],
+                messages=[{"role": "user", "content": _user_content(question, feedback)}],
             )
         except Exception as e:
             raise LLMError(f"Anthropic request failed: {e}") from e
@@ -75,6 +85,16 @@ def make_provider(
     if provider == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model, base_url=base_url)
     raise LLMError(f"Unknown provider: {provider!r}")
+
+
+def _user_content(question: str, feedback: str | None) -> str:
+    if feedback is None:
+        return question
+    return (
+        f"{question}\n\n"
+        f"Your previous SQL attempt failed with:\n{feedback}\n"
+        "Return a corrected single SELECT statement."
+    )
 
 
 def _strip_sql_fences(text: str) -> str:
